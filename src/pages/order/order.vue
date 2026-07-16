@@ -5,10 +5,15 @@
         <text class="back-icon">‹</text>
       </view>
       <text class="header-title">点餐</text>
-      <view class="header-btn cart-btn" @click="openCart">
-        <text class="cart-icon">🛒</text>
-        <view v-if="cartCount > 0" class="cart-badge">
-          <text class="badge-text">{{ cartCount > 99 ? '99+' : cartCount }}</text>
+      <view class="header-actions">
+        <view class="header-btn history-btn" @click="openHistory">
+          <text class="history-icon">🧾</text>
+        </view>
+        <view class="header-btn cart-btn" @click="openCart">
+          <text class="cart-icon">🛒</text>
+          <view v-if="cartCount > 0" class="cart-badge">
+            <text class="badge-text">{{ cartCount > 99 ? '99+' : cartCount }}</text>
+          </view>
         </view>
       </view>
     </view>
@@ -22,7 +27,8 @@
         >
           <view class="food-image-wrap" @click="previewFood(item)">
             <view class="food-image" :style="{ background: item.bg }">
-              <text class="food-emoji">{{ item.icon }}</text>
+              <image v-if="item.imageUrl" class="food-photo" :src="item.imageUrl" mode="aspectFill" />
+              <text v-else class="food-emoji">{{ item.icon }}</text>
             </view>
           </view>
           <text class="food-name">{{ item.name }}</text>
@@ -67,7 +73,8 @@
           <text>✕</text>
         </view>
         <view class="preview-image" :style="{ background: previewItem.bg }">
-          <text class="preview-emoji">{{ previewItem.icon }}</text>
+          <image v-if="previewItem.imageUrl" class="preview-photo" :src="previewItem.imageUrl" mode="aspectFill" />
+          <text v-else class="preview-emoji">{{ previewItem.icon }}</text>
         </view>
         <text class="preview-name">{{ previewItem.name }}</text>
         <text class="preview-price">¥{{ previewItem.price }}</text>
@@ -87,6 +94,55 @@
       </view>
     </view>
 
+    <view v-if="showHistory" class="modal-mask" @click="showHistory = false">
+      <view class="cart-modal" @click.stop>
+        <view class="cart-header">
+          <text class="cart-title">历史订单</text>
+          <view class="cart-close" @click="showHistory = false">
+            <text>✕</text>
+          </view>
+        </view>
+
+        <view v-if="selectedHistoryOrder" class="history-detail">
+          <view class="history-detail-head">
+            <view>
+              <text class="history-detail-title">订单 #{{ selectedHistoryOrder.id }}</text>
+              <text class="history-detail-time">{{ formatTime(selectedHistoryOrder.createdAt) }}</text>
+            </view>
+            <text class="order-status" :class="selectedHistoryOrder.status">{{ getStatusText(selectedHistoryOrder.status) }}</text>
+          </view>
+          <view v-for="item in selectedHistoryOrder.items" :key="item.id" class="history-item">
+            <text class="history-item-name">{{ item.name }} × {{ item.qty }}</text>
+            <text class="history-item-price">¥{{ (item.price * item.qty).toFixed(2) }}</text>
+          </view>
+          <view v-if="selectedHistoryOrder.note" class="order-note">备注：{{ selectedHistoryOrder.note }}</view>
+          <text class="history-total">合计 ¥{{ selectedHistoryOrder.totalPrice.toFixed(2) }}</text>
+          <view class="history-back-btn" @click="selectedHistoryOrder = null">
+            <text>返回列表</text>
+          </view>
+        </view>
+
+        <scroll-view v-else class="cart-list" scroll-y>
+          <view
+            v-for="order in historyOrders"
+            :key="order.id"
+            class="history-card"
+            @click="selectedHistoryOrder = order"
+          >
+            <view class="history-card-top">
+              <text class="history-card-title">订单 #{{ order.id }}</text>
+              <text class="order-status" :class="order.status">{{ getStatusText(order.status) }}</text>
+            </view>
+            <text class="history-card-time">{{ formatTime(order.createdAt) }}</text>
+            <text class="history-card-meta">{{ order.items.length }} 个菜品 · ¥{{ order.totalPrice.toFixed(2) }}</text>
+          </view>
+          <view v-if="!historyOrders.length" class="cart-empty">
+            <text>还没有历史订单哦~</text>
+          </view>
+        </scroll-view>
+      </view>
+    </view>
+
     <!-- 购物车弹窗 -->
     <view v-if="showCart" class="modal-mask" @click="showCart = false">
       <view class="cart-modal" @click.stop>
@@ -100,7 +156,8 @@
         <scroll-view v-if="cartList.length" class="cart-list" scroll-y>
           <view v-for="item in cartList" :key="item.id" class="cart-item">
             <view class="cart-item-img" :style="{ background: item.bg }">
-              <text>{{ item.icon }}</text>
+              <image v-if="item.imageUrl" class="cart-item-photo" :src="item.imageUrl" mode="aspectFill" />
+              <text v-else>{{ item.icon }}</text>
             </view>
             <view class="cart-item-info">
               <text class="cart-item-name">{{ item.name }}</text>
@@ -138,18 +195,25 @@
 </template>
 
 <script>
-import { categories, foods } from '@/data/foods.js'
+import { getCategories, getFoods, getUserOrders, submitOrder as submitOrderApi } from '@/api/foods.js'
 
 export default {
   data() {
     return {
-      categories,
-      foods,
+      categories: [],
+      foods: [],
       activeCategory: 'main',
       cart: {},
       showCart: false,
+      showHistory: false,
+      historyOrders: [],
+      selectedHistoryOrder: null,
       previewItem: null,
     }
+  },
+  async onShow() {
+    await this.loadFoods()
+    await this.loadHistoryOrders()
   },
   computed: {
     currentFoods() {
@@ -168,6 +232,14 @@ export default {
     },
   },
   methods: {
+    async loadFoods() {
+      const [categories, foods] = await Promise.all([getCategories(), getFoods()])
+      this.categories = categories
+      this.foods = foods
+      if (!this.categories.some((cat) => cat.id === this.activeCategory)) {
+        this.activeCategory = this.categories[0]?.id || 'main'
+      }
+    },
     goBack() {
       uni.navigateBack()
     },
@@ -191,11 +263,49 @@ export default {
     openCart() {
       this.showCart = true
     },
-    submitOrder() {
+    async openHistory() {
+      this.selectedHistoryOrder = null
+      this.showHistory = true
+      await this.loadHistoryOrders()
+    },
+    async loadHistoryOrders() {
+      try {
+        this.historyOrders = await getUserOrders()
+      } catch (error) {
+        this.historyOrders = []
+      }
+    },
+    getStatusText(status) {
+      const map = {
+        pending: '待处理',
+        approved: '已同意',
+        returned: '已退回',
+      }
+      return map[status] || status
+    },
+    formatTime(value) {
+      return new Date(value).toLocaleString()
+    },
+    async submitOrder() {
       if (this.cartList.length === 0) return
-      uni.showToast({ title: '订单提交成功', icon: 'success' })
-      this.cart = {}
-      this.showCart = false
+      try {
+        await submitOrderApi({
+          items: this.cartList.map((item) => ({
+            id: item.id,
+            name: item.name,
+            price: item.price,
+            qty: item.qty,
+            imageUrl: item.imageUrl,
+            icon: item.icon,
+          })),
+          totalPrice: this.totalPrice,
+        })
+        uni.showToast({ title: '订单提交成功', icon: 'success' })
+        this.cart = {}
+        this.showCart = false
+      } catch (error) {
+        uni.showToast({ title: error.message || '提交失败', icon: 'none' })
+      }
     },
   },
 }
@@ -226,6 +336,12 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
 }
 
 .back-icon {
@@ -306,6 +422,12 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+}
+
+.food-photo {
+  width: 100%;
+  height: 100%;
 }
 
 .food-emoji {
@@ -473,6 +595,12 @@ export default {
   align-items: center;
   justify-content: center;
   margin-bottom: 24rpx;
+  overflow: hidden;
+}
+
+.preview-photo {
+  width: 100%;
+  height: 100%;
 }
 
 .preview-emoji {
@@ -559,6 +687,12 @@ export default {
   justify-content: center;
   font-size: 40rpx;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.cart-item-photo {
+  width: 100%;
+  height: 100%;
 }
 
 .cart-item-info {

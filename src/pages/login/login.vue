@@ -27,12 +27,15 @@
           placeholder-class="placeholder"
         />
       </view>
-      <button class="login-btn" @click="handleLogin">登 录</button>
+      <button class="login-btn" @click="handleLogin">登录</button>
+      <text class="login-tip">管理员：lsy / password；用户：zy / password</text>
     </view>
   </view>
 </template>
 
 <script>
+import { login } from '@/api/foods.js'
+
 export default {
   data() {
     return {
@@ -41,7 +44,7 @@ export default {
     }
   },
   methods: {
-    handleLogin() {
+    async handleLogin() {
       if (!this.username.trim()) {
         uni.showToast({ title: '请输入用户名', icon: 'none' })
         return
@@ -50,7 +53,17 @@ export default {
         uni.showToast({ title: '请输入密码', icon: 'none' })
         return
       }
-      uni.reLaunch({ url: '/pages/home/home' })
+      try {
+        const user = await login({
+          username: this.username.trim(),
+          password: this.password,
+        })
+        uni.setStorageSync('token', user.token)
+        uni.setStorageSync('user', user)
+        uni.reLaunch({ url: '/pages/home/home' })
+      } catch (error) {
+        uni.showToast({ title: error.message || '登录失败', icon: 'none' })
+      }
     },
   },
 }
@@ -136,5 +149,13 @@ export default {
 
 .login-btn::after {
   border: none;
+}
+
+.login-tip {
+  display: block;
+  margin-top: 28rpx;
+  text-align: center;
+  font-size: 24rpx;
+  color: #999;
 }
 </style>

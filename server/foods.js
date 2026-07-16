@@ -1,4 +1,4 @@
-export const categories = [
+const categories = [
   { id: 'main', name: '主食', icon: '🍚' },
   { id: 'snack', name: '小吃', icon: '🍟' },
   { id: 'drink', name: '饮品', icon: '🥤' },
@@ -67,7 +67,7 @@ const baseFoods = [
   ['hot', '水煮鱼片', 32, '🐟'],
 ]
 
-export const foods = baseFoods.map(([category, name, price, icon], index) => ({
+const foods = baseFoods.map(([category, name, price, icon], index) => ({
   id: index + 1,
   category,
   name,
@@ -76,3 +76,5 @@ export const foods = baseFoods.map(([category, name, price, icon], index) => ({
   imageUrl: '',
   bg: colors[index % colors.length],
 }))
+
+module.exports = { categories, foods }
