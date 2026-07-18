@@ -2,18 +2,44 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const sharp = require('sharp')
-const { categories, foods: seedFoods } = require('./foods')
+const { categories: seedCategories, foods: seedFoods } = require('./foods')
+const {
+  initializeDatabase,
+  insertChatMessage,
+  getChatMessages,
+  saveFoodImage,
+  deleteFoodImageByName,
+  getCategoriesFromDb,
+  insertCategory,
+  deleteCategoryById,
+  getFoodsFromDb,
+  insertFoodToDb,
+  updateFoodInDb,
+  deleteFoodById,
+  insertOrderToDb,
+  getOrdersFromDb,
+  updateOrderStatusInDb,
+} = require('./db')
 
 const PORT = Number(process.env.PORT || 3000)
-const HOST = `http://localhost:${PORT}`
+const PUBLIC_HOST = process.env.PUBLIC_HOST || ''
 const UPLOAD_DIR = path.join(__dirname, 'uploads')
 
+function getUploadHost(req) {
+  if (PUBLIC_HOST) {
+    return PUBLIC_HOST
+  }
+  const hostHeader = req.headers.host || `localhost:${PORT}`
+  return `http://${hostHeader}`
+}
+
+let categories = seedCategories.map((item) => ({ ...item }))
 let foods = seedFoods.map((item) => ({ ...item }))
 let orders = []
 
 const users = [
   { username: 'lsy', password: 'password', role: 'admin' },
-  { username: 'zy', password: 'password', role: 'user' },
+  { username: 'zy', password: 'password', role: 'admin' },
 ]
 
 if (!fs.existsSync(UPLOAD_DIR)) {
@@ -23,7 +49,7 @@ if (!fs.existsSync(UPLOAD_DIR)) {
 function applyCors(req, res) {
   const origin = req.headers.origin || '*'
   res.setHeader('Access-Control-Allow-Origin', origin)
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
   res.setHeader('Access-Control-Allow-Credentials', 'true')
 }
@@ -113,7 +139,8 @@ async function parseMultipartUpload(req) {
         const filename = `${Date.now()}-${Math.random().toString(16).slice(2)}${ext === '.png' || ext === '.webp' ? '.jpg' : ext || '.jpg'}`
         const filePath = path.join(UPLOAD_DIR, filename)
         fs.writeFileSync(filePath, processedBuffer)
-        resolve({ filename, url: `${HOST}/uploads/${filename}` })
+        await saveFoodImage(filename, processedBuffer, 'image/jpeg')
+        resolve({ filename, url: `${getUploadHost(req)}/uploads/${filename}` })
       } catch (error) {
         reject(error)
       }
@@ -134,6 +161,41 @@ function normalizeFood(input, current = {}) {
   }
 }
 
+function extractUploadFilename(imageUrl) {
+  if (!imageUrl) return ''
+  try {
+    const url = new URL(imageUrl)
+    return path.basename(decodeURIComponent(url.pathname))
+  } catch (err) {
+    return path.basename(decodeURIComponent(imageUrl.split('?')[0] || ''))
+  }
+}
+
+function deleteUploadFile(imageUrl) {
+  const filename = extractUploadFilename(imageUrl)
+  if (!filename) return
+  const filePath = path.join(UPLOAD_DIR, filename)
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath)
+    } catch (error) {
+      console.warn('删除上传图片失败：', filePath, error.message)
+    }
+  }
+}
+
+function getContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  const map = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+  }
+  return map[ext] || 'application/octet-stream'
+}
+
 function serveUpload(req, res, url) {
   const filename = path.basename(decodeURIComponent(url.pathname.replace('/uploads/', '')))
   const filePath = path.join(UPLOAD_DIR, filename)
@@ -143,6 +205,8 @@ function serveUpload(req, res, url) {
     return
   }
   applyCors(req, res)
+  res.setHeader('Content-Type', getContentType(filePath))
+  res.setHeader('Cache-Control', 'public, max-age=31536000')
   fs.createReadStream(filePath).pipe(res)
 }
 
@@ -176,11 +240,42 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/categories') {
+      try {
+        const dbCats = await getCategoriesFromDb()
+        categories = dbCats
+      } catch (e) {
+        // fallback to memory categories
+      }
       sendJson(res, 200, categories, req)
       return
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/categories') {
+      if (!requireAdmin(req, res)) return
+      const body = await readBody(req)
+      const name = String(body.name || '').trim()
+      const icon = String(body.icon || '🍽️').trim() || '🍽️'
+      if (!name) {
+        sendJson(res, 400, { message: '分类名称不能为空' }, req)
+        return
+      }
+      try {
+        const category = await insertCategory(name, icon)
+        categories.push(category)
+        sendJson(res, 201, category, req)
+      } catch (error) {
+        sendJson(res, 500, { message: error.message || '保存分类失败' }, req)
+      }
+      return
+    }
+
     if (req.method === 'GET' && url.pathname === '/api/foods') {
+      try {
+        const dbFoods = await getFoodsFromDb()
+        foods = dbFoods
+      } catch (e) {
+        // fallback to memory
+      }
       sendJson(res, 200, foods, req)
       return
     }
@@ -188,32 +283,88 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/foods') {
       if (!requireAdmin(req, res)) return
       const body = await readBody(req)
-      const nextId = foods.reduce((max, item) => Math.max(max, item.id), 0) + 1
-      const food = { id: nextId, ...normalizeFood(body) }
-      foods.push(food)
-      sendJson(res, 201, food, req)
+      const food = normalizeFood(body)
+      try {
+        const inserted = await insertFoodToDb(food)
+        foods.push(inserted)
+        sendJson(res, 201, inserted, req)
+      } catch (error) {
+        sendJson(res, 500, { message: error.message || '保存菜品失败' }, req)
+      }
       return
     }
 
     const foodMatch = url.pathname.match(/^\/api\/foods\/(\d+)$/)
+    if (req.method === 'DELETE' && foodMatch) {
+      if (!requireAdmin(req, res)) return
+      const id = Number(foodMatch[1])
+      try {
+        await deleteFoodById(id)
+        foods = foods.filter((item) => item.id !== id)
+        sendJson(res, 200, { success: true }, req)
+      } catch (error) {
+        console.error('DELETE /api/foods error:', id, error)
+        sendJson(res, 500, { message: error.message || '删除失败' }, req)
+      }
+      return
+    }
+
     if (req.method === 'PUT' && foodMatch) {
       if (!requireAdmin(req, res)) return
       const id = Number(foodMatch[1])
-      const index = foods.findIndex((item) => item.id === id)
-      if (index === -1) {
-        sendJson(res, 404, { message: '菜品不存在' }, req)
-        return
+      try {
+        const index = foods.findIndex((item) => item.id === id)
+        if (index === -1) {
+          sendJson(res, 404, { message: '菜品不存在' }, req)
+          return
+        }
+        const body = await readBody(req)
+        const updated = await updateFoodInDb(id, normalizeFood(body, foods[index]), foods[index].imageUrl)
+        foods[index] = updated
+        sendJson(res, 200, foods[index], req)
+      } catch (error) {
+        sendJson(res, 500, { message: error.message || '更新失败' }, req)
       }
-      const body = await readBody(req)
-      foods[index] = { id, ...normalizeFood(body, foods[index]) }
-      sendJson(res, 200, foods[index], req)
       return
     }
 
     if (req.method === 'POST' && url.pathname === '/api/upload') {
       if (!requireAdmin(req, res)) return
-      const file = await parseMultipartUpload(req)
+      const oldImageUrl = url.searchParams.get('oldImageUrl') || ''
+      if (oldImageUrl) {
+        deleteUploadFile(oldImageUrl)
+        const oldFilename = extractUploadFilename(oldImageUrl)
+        if (oldFilename) {
+          await deleteFoodImageByName(oldFilename)
+        }
+      }
+      const file = await parseMultipartUpload(req, req)
       sendJson(res, 201, file, req)
+      return
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/chat/messages') {
+      const user = getCurrentUser(req)
+      const currentUser = user?.username || 'user'
+      const partner = currentUser === 'lsy' ? 'zy' : 'lsy'
+      const messages = await getChatMessages()
+      const filteredMessages = messages.filter((item) => item.username === currentUser || item.username === partner)
+      sendJson(res, 200, filteredMessages, req)
+      return
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/chat/messages') {
+      const body = await readBody(req)
+      const content = String(body.content || '').trim()
+      if (!content) {
+        sendJson(res, 400, { message: '消息不能为空' }, req)
+        return
+      }
+      const user = getCurrentUser(req)
+      const sender = user?.username || String(body.username || 'user').trim() || 'user'
+      const isSelf = Boolean(user?.username) || Boolean(body.isSelf)
+      const savedMessage = await insertChatMessage(sender, content, isSelf)
+      sendJson(res, 201, savedMessage, req)
       return
     }
 
@@ -237,8 +388,13 @@ const server = http.createServer(async (req, res) => {
         note: '',
         createdAt: new Date().toISOString(),
       }
-      orders.unshift(order)
-      sendJson(res, 201, order, req)
+      try {
+        await insertOrderToDb(order)
+        orders.unshift(order)
+        sendJson(res, 201, order, req)
+      } catch (error) {
+        sendJson(res, 500, { message: error.message || '保存订单失败' }, req)
+      }
       return
     }
 
@@ -248,6 +404,12 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 401, { message: '请先登录' }, req)
         return
       }
+      try {
+        const dbOrders = await getOrdersFromDb()
+        orders = dbOrders
+      } catch (e) {
+        // fallback to memory
+      }
       const userOrders = orders.filter((order) => order.username === user.username)
       sendJson(res, 200, userOrders, req)
       return
@@ -255,7 +417,15 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/orders') {
       if (!requireAdmin(req, res)) return
-      sendJson(res, 200, orders, req)
+      const user = getCurrentUser(req)
+      try {
+        const dbOrders = await getOrdersFromDb()
+        orders = dbOrders
+      } catch (e) {
+        // fallback to memory
+      }
+      const visibleOrders = orders.filter((order) => order.username !== user.username)
+      sendJson(res, 200, visibleOrders, req)
       return
     }
 
@@ -263,33 +433,38 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PUT' && orderStatusMatch) {
       if (!requireAdmin(req, res)) return
       const id = Number(orderStatusMatch[1])
-      const body = await readBody(req)
-      const status = body.status === 'approved' ? 'approved' : 'returned'
-      let updatedOrder = null
-      orders = orders.map((order) => {
-        if (order.id !== id) return order
-        updatedOrder = {
-          ...order,
-          status,
-          note: String(body.note || '').trim(),
-          handledAt: new Date().toISOString(),
-        }
-        return updatedOrder
-      })
-      if (!updatedOrder) {
-        sendJson(res, 404, { message: '订单不存在' }, req)
-        return
+      try {
+        const body = await readBody(req)
+        const parsedBody = typeof body === 'string' ? JSON.parse(body) : body
+        const status = parsedBody.status === 'approved' ? 'approved' : 'returned'
+        const updated = await updateOrderStatusInDb(id, status, String(parsedBody.note || '').trim())
+        orders = orders.map((o) => (o.id === id ? updated : o))
+        sendJson(res, 200, updated, req)
+      } catch (error) {
+        console.error('PUT /api/orders/:id/status error:', error)
+        sendJson(res, 500, { message: error.message || '更新订单失败' }, req)
       }
-      sendJson(res, 200, updatedOrder, req)
       return
     }
 
     sendJson(res, 404, { message: 'Not found' }, req)
   } catch (error) {
-    sendJson(res, 400, { message: error.message || 'Bad request' }, req)
+    console.error('Server error:', error)
+    sendJson(res, 500, { message: error.message || '服务器内部错误' }, req)
   }
 })
 
-server.listen(PORT, () => {
-  console.log(`Food API server is running at http://localhost:${PORT}`)
-})
+async function startServer() {
+  try {
+    await initializeDatabase()
+    server.listen(PORT, () => {
+      console.log(`Food API server is running at http://localhost:${PORT}`)
+      console.log(`Public upload host: ${PUBLIC_HOST || `http://localhost:${PORT}`}`)
+    })
+  } catch (error) {
+    console.error('Failed to start server:', error)
+    process.exit(1)
+  }
+}
+
+startServer()

@@ -44,6 +44,7 @@ import TabBar from '@/components/TabBar/TabBar.vue'
 const baseMenus = [
   { label: '相册', icon: '📷', color: '#f48fb1' },
   { label: '点餐', icon: '🍽️', color: '#ce93d8', action: 'order' },
+  { label: '菜品管理', icon: '📝', color: '#ffd54f', action: 'foodManage' },
   { label: '钱包', icon: '💳', color: '#ffab91' },
   { label: '导航', icon: '📍', color: '#a5d6a7' },
   { label: '数据', icon: '📊', color: '#90caf9' },
@@ -51,7 +52,6 @@ const baseMenus = [
 ]
 
 const adminMenus = [
-  { label: '菜品管理', icon: '📝', color: '#ffd54f', action: 'foodManage' },
   { label: '订单处理', icon: '🔔', color: '#ffcc80', action: 'orderAdmin' },
 ]
 

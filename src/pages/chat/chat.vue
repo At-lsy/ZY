@@ -68,6 +68,19 @@
 <script>
 import TabBar from '@/components/TabBar/TabBar.vue'
 
+function getApiBaseUrl() {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'http://localhost:3000/api'
+    }
+    return `http://${host}:3000/api`
+  }
+  return 'http://localhost:3000/api'
+}
+
+const API_BASE_URL = getApiBaseUrl()
+
 const TIME_GAP = 5 * 60 * 1000
 
 function pad(n) {
@@ -113,28 +126,12 @@ export default {
     return {
       inputText: '',
       scrollTop: 0,
-      messages: [
-        {
-          content: '你好！有什么可以帮你的吗？',
-          isSelf: false,
-          time: base.getTime(),
-        },
-        {
-          content: '我想点餐',
-          isSelf: true,
-          time: base.getTime() + 2 * 60 * 1000,
-        },
-        {
-          content: '好的，请点击首页的「点餐」按钮开始点餐哦~',
-          isSelf: false,
-          time: base.getTime() + 3 * 60 * 1000,
-        },
-        {
-          content: '好的，谢谢！',
-          isSelf: true,
-          time: base.getTime() + 8 * 60 * 1000,
-        },
-      ],
+      messages: [],
+      chatTimer: null,
+      currentUserName: 'user',
+      partnerName: '店长',
+      messageCount: 0,
+      isActive: false,
     }
   },
   computed: {
@@ -159,17 +156,66 @@ export default {
     },
   },
   methods: {
-    sendMessage() {
+    async loadMessages() {
+      try {
+        const user = uni.getStorageSync('user') || {}
+        this.currentUserName = user.username || 'user'
+        this.partnerName = user.role === 'admin' ? '用户' : '店长'
+        const res = await uni.request({
+          url: `${API_BASE_URL}/chat/messages`,
+          method: 'GET',
+          header: {
+            Authorization: `Bearer ${uni.getStorageSync('token') || ''}`,
+          },
+        })
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          const prevCount = this.messages.length
+          this.messages = (res.data || []).map((item) => ({
+            content: item.content,
+            isSelf: item.username === this.currentUserName,
+            time: item.time || Date.now(),
+          }))
+          const incoming = this.messages.length - prevCount
+          if (incoming > 0 && !this.isActive) {
+            const unread = Number(uni.getStorageSync('chatUnreadCount') || 0) + incoming
+            uni.setStorageSync('chatUnreadCount', unread)
+          }
+          if (this.isActive) {
+            this.markMessagesAsRead()
+          }
+          this.messageCount = Number(uni.getStorageSync('chatUnreadCount') || 0)
+          this.$nextTick(() => this.scrollToBottom())
+        }
+      } catch (error) {
+        console.error('loadMessages failed', error)
+      }
+    },
+    async sendMessage() {
       const text = this.inputText.trim()
       if (!text) return
 
-      this.messages.push({
-        content: text,
-        isSelf: true,
-        time: Date.now(),
-      })
-      this.inputText = ''
-      this.scrollToBottom()
+      try {
+        const res = await uni.request({
+          url: `${API_BASE_URL}/chat/messages`,
+          method: 'POST',
+          header: {
+            Authorization: `Bearer ${uni.getStorageSync('token') || ''}`,
+          },
+          data: {
+            content: text,
+          },
+        })
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          this.inputText = ''
+          await this.loadMessages()
+        }
+      } catch (error) {
+        uni.showToast({ title: '发送失败', icon: 'none' })
+      }
+    },
+    markMessagesAsRead() {
+      uni.setStorageSync('chatUnreadCount', 0)
+      this.messageCount = 0
     },
     scrollToBottom() {
       this.$nextTick(() => {
@@ -178,7 +224,23 @@ export default {
     },
   },
   mounted() {
-    this.scrollToBottom()
+    this.isActive = true
+    this.markMessagesAsRead()
+    this.loadMessages()
+    this.chatTimer = setInterval(() => {
+      this.loadMessages()
+    }, 4000)
+  },
+  onShow() {
+    this.isActive = true
+    this.markMessagesAsRead()
+  },
+  onHide() {
+    this.isActive = false
+  },
+  onUnload() {
+    this.isActive = false
+    if (this.chatTimer) clearInterval(this.chatTimer)
   },
 }
 </script>

@@ -28,7 +28,7 @@
         />
       </view>
       <button class="login-btn" @click="handleLogin">登录</button>
-      <text class="login-tip">管理员：lsy / password；用户：zy / password</text>
+      <text class="login-tip">管理员账号：lsy / password；zy / password</text>
     </view>
   </view>
 </template>

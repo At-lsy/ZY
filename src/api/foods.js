@@ -3,7 +3,7 @@ import { categories as fallbackCategories, foods as fallbackFoods } from '@/data
 function getApiBaseUrl() {
   if (typeof window !== 'undefined') {
     const host = window.location.hostname
-    if (host === 'localhost' || host === '127.0.0.1') {
+    if (!host || host === '0.0.0.0' || host === '::' || host === 'localhost' || host === '127.0.0.1') {
       return 'http://localhost:3000/api'
     }
     return `http://${host}:3000/api`
@@ -12,6 +12,18 @@ function getApiBaseUrl() {
 }
 
 const API_BASE_URL = getApiBaseUrl()
+
+function resolveImageUrl(url) {
+  if (!url) return ''
+  if (/^https?:\/\//i.test(url)) {
+    return url
+  }
+  const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
+  const base = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::'
+    ? 'http://localhost:3000'
+    : `http://${host}:3000`
+  return `${base}${url.startsWith('/') ? url : `/${url}`}`
+}
 
 function request({ url, method = 'GET', data }) {
   return new Promise((resolve, reject) => {
@@ -63,10 +75,19 @@ export function updateFood(id, data) {
   return request({ url: `/foods/${id}`, method: 'PUT', data })
 }
 
-export function uploadFoodImage(filePath) {
+export function deleteFood(id) {
+  return request({ url: `/foods/${id}`, method: 'DELETE' })
+}
+
+export function createCategory(data) {
+  return request({ url: '/categories', method: 'POST', data })
+}
+
+export function uploadFoodImage(filePath, oldImageUrl = '') {
+  const url = `${API_BASE_URL}/upload${oldImageUrl ? `?oldImageUrl=${encodeURIComponent(oldImageUrl)}` : ''}`
   return new Promise((resolve, reject) => {
     uni.uploadFile({
-      url: `${API_BASE_URL}/upload`,
+      url,
       filePath,
       name: 'file',
       header: {
@@ -74,7 +95,11 @@ export function uploadFoodImage(filePath) {
       },
       success: (res) => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(JSON.parse(res.data))
+          const payload = JSON.parse(res.data)
+          resolve({
+            ...payload,
+            url: resolveImageUrl(payload.url),
+          })
           return
         }
         reject(new Error(res.data || '上传失败'))

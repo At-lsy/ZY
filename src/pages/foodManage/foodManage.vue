@@ -4,7 +4,8 @@
       <view class="header-btn" @click="goBack"><text class="back-icon">‹</text></view>
       <text class="header-title">菜品管理</text>
       <view class="header-actions">
-        <view class="header-btn" @click="openCreate"><text class="new-icon">＋</text></view>
+        <view v-if="canManage" class="header-btn" @click="openCategoryModal"><text class="new-icon">🏷️</text></view>
+        <view v-if="canManage" class="header-btn" @click="openCreate"><text class="new-icon">＋</text></view>
         <view class="header-btn" @click="loadFoods"><text class="refresh-icon">⟳</text></view>
       </view>
     </view>
@@ -41,16 +42,37 @@
           <text class="food-name">{{ item.name }}</text>
           <text class="food-meta">¥{{ item.price }} · {{ getCategoryName(item.category) }}</text>
         </view>
-        <text class="edit-text">编辑</text>
+        <view class="food-actions">
+          <text class="edit-text">{{ canManage ? '编辑' : '查看' }}</text>
+          <view v-if="canManage" class="delete-btn" @click.stop.prevent="deleteFood(item)">删除</view>
+        </view>
       </view>
       <view class="bottom-space" />
     </scroll-view>
+
+    <view v-if="showCategoryModal" class="modal-mask" @click="closeCategoryModal">
+      <view class="edit-modal" @click.stop>
+        <text class="modal-title">新增分类</text>
+        <view class="form-item">
+          <text class="form-label">分类名称</text>
+          <input class="form-input" v-model="categoryForm.name" placeholder="例如：家常菜" />
+        </view>
+        <view class="form-item">
+          <text class="form-label">分类图标</text>
+          <input class="form-input" v-model="categoryForm.icon" placeholder="例如：🍲" />
+        </view>
+        <view class="modal-actions">
+          <view class="cancel-btn" @click="closeCategoryModal">取消</view>
+          <view class="save-btn" @click="saveCategory">确认新增</view>
+        </view>
+      </view>
+    </view>
 
     <view v-if="editingFood !== null || isCreating" class="modal-mask" @click="closeEditor">
       <view class="edit-modal" @click.stop>
         <text class="modal-title">{{ editingFood ? '修改菜品' : '新增菜品' }}</text>
         <view class="preview" :style="{ background: form.bg }" @click="chooseImage">
-          <image v-if="form.imageUrl" class="preview-photo" :src="form.imageUrl" mode="aspectFill" />
+          <image v-if="form.imageUrl" class="preview-photo" :src="form.imageUrl" mode="aspectFill" @error="handleImageError(form)" />
           <text v-else class="preview-icon">{{ form.icon }}</text>
         </view>
         <text class="upload-hint" @click="chooseImage">
@@ -86,7 +108,7 @@
 </template>
 
 <script>
-import { createFood, getCategories, getFoods, updateFood, uploadFoodImage } from '@/api/foods.js'
+import { createCategory, createFood, deleteFood as deleteFoodApi, getCategories, getFoods, updateFood, uploadFoodImage } from '@/api/foods.js'
 
 export default {
   data() {
@@ -97,6 +119,12 @@ export default {
       editingFood: null,
       isCreating: false,
       imageChanged: false,
+      canManage: false,
+      showCategoryModal: false,
+      categoryForm: {
+        name: '',
+        icon: '🍽️',
+      },
       form: {
         name: '',
         price: '',
@@ -122,11 +150,11 @@ export default {
   },
   async onShow() {
     const user = uni.getStorageSync('user')
-    if (user?.role !== 'admin') {
-      uni.showToast({ title: '当前账号没有管理权限', icon: 'none' })
-      uni.navigateBack()
+    if (!user) {
+      uni.reLaunch({ url: '/pages/login/login' })
       return
     }
+    this.canManage = user?.role === 'admin'
     await this.loadFoods()
   },
   methods: {
@@ -139,12 +167,20 @@ export default {
       return this.categories.find((item) => item.id === categoryId)?.name || categoryId
     },
     openEditor(food) {
+      if (!this.canManage) {
+        uni.showToast({ title: '仅管理员可编辑菜品', icon: 'none' })
+        return
+      }
       this.editingFood = food
       this.isCreating = false
       this.imageChanged = false
       this.form = { ...food, price: String(food.price) }
     },
     openCreate() {
+      if (!this.canManage) {
+        uni.showToast({ title: '仅管理员可新增菜品', icon: 'none' })
+        return
+      }
       this.editingFood = null
       this.isCreating = true
       this.imageChanged = false
@@ -162,6 +198,25 @@ export default {
       this.isCreating = false
       this.imageChanged = false
     },
+    openCategoryModal() {
+      this.showCategoryModal = true
+      this.categoryForm = { name: '', icon: '🍽️' }
+    },
+    closeCategoryModal() {
+      this.showCategoryModal = false
+    },
+    async saveCategory() {
+      const name = this.categoryForm.name.trim()
+      if (!name) {
+        uni.showToast({ title: '分类名称不能为空', icon: 'none' })
+        return
+      }
+      const category = await createCategory({ name, icon: this.categoryForm.icon || '🍽️' })
+      this.categories = [...this.categories, category]
+      this.form.category = category.id
+      this.closeCategoryModal()
+      uni.showToast({ title: '分类新增成功', icon: 'success' })
+    },
     changeCategory(event) {
       this.form.category = this.categories[Number(event.detail.value)]?.id || this.form.category
     },
@@ -170,7 +225,7 @@ export default {
         count: 1,
         success: async (res) => {
           try {
-            const uploaded = await uploadFoodImage(res.tempFilePaths[0])
+            const uploaded = await uploadFoodImage(res.tempFilePaths[0], this.editingFood?.imageUrl)
             this.form.imageUrl = uploaded.url
             this.imageChanged = true
             uni.showToast({ title: '图片上传成功', icon: 'success' })
@@ -179,6 +234,28 @@ export default {
           }
         },
       })
+    },
+    async deleteFood(food) {
+      const confirm = await new Promise((resolve) => {
+        uni.showModal({
+          title: '删除菜品',
+          content: `确定删除 ${food.name} 吗？`,
+          success: (res) => resolve(res.confirm),
+        })
+      })
+      if (!confirm) return
+      try {
+        const result = await deleteFoodApi(food.id)
+        if (result && result.success !== false) {
+          this.foods = this.foods.filter((item) => item.id !== food.id)
+          uni.showToast({ title: '删除成功', icon: 'success' })
+        } else {
+          throw new Error('删除失败')
+        }
+      } catch (error) {
+        console.error('deleteFood error', error)
+        uni.showToast({ title: error.message || '删除失败', icon: 'none' })
+      }
     },
     async saveFood() {
       const price = Number(this.form.price)
@@ -199,6 +276,11 @@ export default {
       }
       this.closeEditor()
       uni.showToast({ title: this.editingFood ? '已同步到服务器' : '新增菜品成功', icon: 'success' })
+    },
+    handleImageError(item) {
+      if (item) {
+        item.imageUrl = ''
+      }
     },
     goBack() {
       uni.navigateBack()
@@ -353,9 +435,24 @@ export default {
   color: #999;
 }
 
+.food-actions {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
 .edit-text {
   font-size: 26rpx;
   color: #43a047;
+  font-weight: 600;
+}
+
+.delete-btn {
+  padding: 10rpx 16rpx;
+  border-radius: 999rpx;
+  background: #ffebee;
+  color: #c62828;
+  font-size: 24rpx;
   font-weight: 600;
 }
 

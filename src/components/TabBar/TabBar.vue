@@ -6,7 +6,12 @@
       class="tab-item"
       @click="switchTab(item)"
     >
-      <text class="tab-icon">{{ item.icon }}</text>
+      <view class="tab-icon-wrap">
+        <text class="tab-icon">{{ item.icon }}</text>
+        <view v-if="showBadge(item)" class="tab-badge">
+          <text class="badge-text">{{ badgeCount > 99 ? '99+' : badgeCount }}</text>
+        </view>
+      </view>
       <text class="tab-text" :class="{ active: current === item.key }">{{ item.text }}</text>
     </view>
   </view>
@@ -20,6 +25,11 @@ export default {
       default: 'home',
     },
   },
+  computed: {
+    badgeCount() {
+      return Number(uni.getStorageSync('chatUnreadCount') || 0)
+    },
+  },
   data() {
     return {
       tabs: [
@@ -30,6 +40,9 @@ export default {
     }
   },
   methods: {
+    showBadge(item) {
+      return item.key === 'chat' && this.badgeCount > 0
+    },
     switchTab(item) {
       if (this.current === item.key) return
       uni.redirectTo({ url: item.path })
@@ -63,9 +76,34 @@ export default {
   padding: 10rpx 0;
 }
 
+.tab-icon-wrap {
+  position: relative;
+}
+
 .tab-icon {
   font-size: 44rpx;
   line-height: 1.2;
+}
+
+.tab-badge {
+  position: absolute;
+  top: -8rpx;
+  right: -10rpx;
+  min-width: 28rpx;
+  height: 28rpx;
+  padding: 0 6rpx;
+  border-radius: 14rpx;
+  background: #ff5a5f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.badge-text {
+  color: #fff;
+  font-size: 20rpx;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .tab-text {
