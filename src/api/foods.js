@@ -1,28 +1,18 @@
 import { categories as fallbackCategories, foods as fallbackFoods } from '@/data/foods.js'
 
-function getApiBaseUrl() {
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname
-    if (!host || host === '0.0.0.0' || host === '::' || host === 'localhost' || host === '127.0.0.1') {
-      return 'http://localhost:3000/api'
-    }
-    return `http://${host}:3000/api`
-  }
-  return 'http://localhost:3000/api'
-}
-
-const API_BASE_URL = getApiBaseUrl()
+// Keep requests on the same origin as the page. This works behind HTTPS,
+// reverse proxies and deployments whose public port is not the API port.
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || './api').replace(/\/$/, '')
 
 function resolveImageUrl(url) {
   if (!url) return ''
   if (/^https?:\/\//i.test(url)) {
     return url
   }
-  const host = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
-  const base = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::'
-    ? 'http://localhost:3000'
-    : `http://${host}:3000`
-  return `${base}${url.startsWith('/') ? url : `/${url}`}`
+  if (typeof document !== 'undefined') {
+    return new URL(url.replace(/^\//, ''), document.baseURI).href
+  }
+  return url
 }
 
 function request({ url, method = 'GET', data }) {
@@ -31,6 +21,7 @@ function request({ url, method = 'GET', data }) {
       url: `${API_BASE_URL}${url}`,
       method,
       data,
+      timeout: 10000,
       header: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${uni.getStorageSync('token') || ''}`,
@@ -42,7 +33,7 @@ function request({ url, method = 'GET', data }) {
         }
         reject(new Error(res.data?.message || '接口请求失败'))
       },
-      fail: reject,
+      fail: (error) => reject(new Error(error.errMsg || '网络请求失败，请检查服务器连接')),
     })
   })
 }

@@ -27,7 +27,9 @@
           placeholder-class="placeholder"
         />
       </view>
-      <button class="login-btn" @click="handleLogin">登录</button>
+      <button class="login-btn" :disabled="isLoggingIn" :loading="isLoggingIn" @click="handleLogin">
+        {{ isLoggingIn ? '登录中...' : '登录' }}
+      </button>
       <text class="login-tip">管理员账号：lsy / password；zy / password</text>
     </view>
   </view>
@@ -41,10 +43,12 @@ export default {
     return {
       username: '',
       password: '',
+      isLoggingIn: false,
     }
   },
   methods: {
     async handleLogin() {
+      if (this.isLoggingIn) return
       if (!this.username.trim()) {
         uni.showToast({ title: '请输入用户名', icon: 'none' })
         return
@@ -53,6 +57,7 @@ export default {
         uni.showToast({ title: '请输入密码', icon: 'none' })
         return
       }
+      this.isLoggingIn = true
       try {
         const user = await login({
           username: this.username.trim(),
@@ -63,6 +68,8 @@ export default {
         uni.reLaunch({ url: '/pages/home/home' })
       } catch (error) {
         uni.showToast({ title: error.message || '登录失败', icon: 'none' })
+      } finally {
+        this.isLoggingIn = false
       }
     },
   },

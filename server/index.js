@@ -24,13 +24,13 @@ const {
 const PORT = Number(process.env.PORT || 3000)
 const PUBLIC_HOST = process.env.PUBLIC_HOST || ''
 const UPLOAD_DIR = path.join(__dirname, 'uploads')
+const WEB_DIR = path.resolve(__dirname, '../dist/build/h5')
 
-function getUploadHost(req) {
+function getUploadHost() {
   if (PUBLIC_HOST) {
-    return PUBLIC_HOST
+    return PUBLIC_HOST.replace(/\/$/, '')
   }
-  const hostHeader = req.headers.host || `localhost:${PORT}`
-  return `http://${hostHeader}`
+  return '.'
 }
 
 let categories = seedCategories.map((item) => ({ ...item }))
@@ -140,7 +140,7 @@ async function parseMultipartUpload(req) {
         const filePath = path.join(UPLOAD_DIR, filename)
         fs.writeFileSync(filePath, processedBuffer)
         await saveFoodImage(filename, processedBuffer, 'image/jpeg')
-        resolve({ filename, url: `${getUploadHost(req)}/uploads/${filename}` })
+        resolve({ filename, url: `${getUploadHost()}/uploads/${filename}` })
       } catch (error) {
         reject(error)
       }
@@ -192,8 +192,27 @@ function getContentType(filePath) {
     '.png': 'image/png',
     '.webp': 'image/webp',
     '.gif': 'image/gif',
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
   }
   return map[ext] || 'application/octet-stream'
+}
+
+function serveWebFile(req, res, pathname) {
+  if (!fs.existsSync(WEB_DIR)) return false
+  const relativePath = pathname === '/' ? 'index.html' : decodeURIComponent(pathname).replace(/^\/+/, '')
+  let filePath = path.resolve(WEB_DIR, relativePath)
+  if (!filePath.startsWith(`${WEB_DIR}${path.sep}`) && filePath !== WEB_DIR) return false
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    filePath = path.join(WEB_DIR, 'index.html')
+  }
+  res.setHeader('Content-Type', getContentType(filePath))
+  fs.createReadStream(filePath).pipe(res)
+  return true
 }
 
 function serveUpload(req, res, url) {
@@ -447,6 +466,7 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    if (req.method === 'GET' && serveWebFile(req, res, url.pathname)) return
     sendJson(res, 404, { message: 'Not found' }, req)
   } catch (error) {
     console.error('Server error:', error)

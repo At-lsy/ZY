@@ -67,19 +67,7 @@
 
 <script>
 import TabBar from '@/components/TabBar/TabBar.vue'
-
-function getApiBaseUrl() {
-  if (typeof window !== 'undefined') {
-    const host = window.location.hostname
-    if (host === 'localhost' || host === '127.0.0.1') {
-      return 'http://localhost:3000/api'
-    }
-    return `http://${host}:3000/api`
-  }
-  return 'http://localhost:3000/api'
-}
-
-const API_BASE_URL = getApiBaseUrl()
+import { API_BASE_URL } from '@/api/foods.js'
 
 const TIME_GAP = 5 * 60 * 1000
 
